@@ -10,67 +10,11 @@ from collections import deque
 from matplotlib import pyplot as plt
 from torchvision.transforms.functional import rotate
 from torchvision.transforms import Grayscale
+from mask_object import Mask_Object
 
 
 
-class Mask_object():
-    def __init__(self, num_frames, color, device, max_memory=100, use_object_img=True) -> None:
-        self.max_memory = max_memory
-        self.color = color
-        self.device = device
-        self.use_object_img = use_object_img
-        self.mask_memory_frames = deque(maxlen=max_memory)
-        self.object_memory_frames = deque(maxlen=max_memory)
-        self.edits = {}
-
-    def update_memory_frame(self, mask_img, org_frame):
-        mask = cv2.inRange(mask_img, self.color, self.color)
-        mask = torch.tensor(mask.reshape(mask.shape[0], mask.shape[1], 1), dtype=torch.bool).to(self.device)
-
-        if self.use_object_img:
-            object_img = torch.where(mask, org_frame, 0).to(self.device)
-            matadate = self.get_edits().get("kaleidoscope", False)
-            if matadate:
-                multiple = matadate["multiple"]
-                center = matadate["center"]
-                angle = 360//multiple
-                # self.show_img(object_img, figsize=(5, 5))
-                object_img = object_img.permute(2, 0, 1)
-                for degree in range(angle, 361, angle):
-                    copy = rotate(object_img, angle=degree, center=center)
-                    object_img = torch.bitwise_or(object_img, copy)
-                    angle = angle*2
-                object_img = object_img.permute(1, 2, 0)
-                # self.show_img(copy.permute(1, 2, 0), figsize=(5, 5))
-                # self.show_img(object_img, figsize=(5, 5))
-                mask = object_img > 0
-                # print(mask.dtype)
-                
-        self.mask_memory_frames.append(mask)
-        self.object_memory_frames.append(object_img)
-    
-    def show_img(self, img, figsize=(1, 1)):
-        plt.figure(figsize=figsize)
-        plt.imshow(img.cpu().numpy(), interpolation='nearest')
-
-    def show_color(self):
-        print(self.color)
-        color_image = torch.tensor([[self.color for j in range(10)] for i in range(10)])
-        self.show_img(color_image)
-
-    def update_edits(self, edit):
-        self.edits.update(edit)
-
-    def get_edits(self) -> dict:
-        return self.edits
-
-    def get_mask_memory_frames(self):
-        return self.mask_memory_frames
-
-    def get_object_memory_frames(self):
-        return self.object_memory_frames
-
-class Mask_video_editor():
+class Mask_Video_Editor():
     def __init__(self, video_path, resize=480, max_memory=100, use_length_ratio=1, efficiency_mode=True) -> None:
         self.efficiency_mode = efficiency_mode
         self.max_memory = max_memory
@@ -83,7 +27,7 @@ class Mask_video_editor():
         self.num_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.use_length_ratio = use_length_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.mask_object_list = [Mask_object(self.num_frames, color=[0, 0, 0], device=self.device)]
+        self.mask_object_list = [Mask_Object(self.num_frames, color=np.array([0, 0, 0]), device=self.device)]
         self.rainbow_colors = torch.tensor([[0, 0, 255], [0, 67, 255], [0, 135, 255], [0, 173, 255], [0, 211, 255], [5, 233, 238], [10, 255, 222], [10, 255, 191], [10, 255, 161], [81, 255, 85], [153, 255, 10], 
                                         [204, 247, 10], [255, 239, 10], [250, 182, 15], [245, 125, 20], [250, 67, 54], [255, 10, 88], [255, 10, 139], [255, 10, 190], [127, 5, 222]], 
                                         dtype=torch.uint8).to(self.device) # BGR Red to Rurple
@@ -150,7 +94,7 @@ class Mask_video_editor():
                             break
                     else:
                         color_dict.update({len(self.mask_object_list): frame[yx[0]][yx[1]]})
-                        self.mask_object_list.append(Mask_object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device))
+                        self.mask_object_list.append(Mask_Object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device))
                         if len(color_dict) == color_num:
                             break
 
@@ -161,10 +105,11 @@ class Mask_video_editor():
             #     mask = cv2.inRange(frame, color, color)
             #     self.mask_object_list[object_idx].update_mask_frame(frame_idx=i, mask=mask)
 
-    def get_mask_object(self, index) -> Mask_object: 
+    def get_mask_object(self, index) -> Mask_Object: 
         return self.mask_object_list[index]
     
-    def show_mask_objects(self) -> Mask_object:
+    def show_mask_objects(self) -> Mask_Object:
+        print("Object 0 is for the background or to process the entire original image")
         for i, object in enumerate(self.mask_object_list):
             print(i)
             object.show_color()
