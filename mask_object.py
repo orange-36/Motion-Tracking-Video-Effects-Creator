@@ -10,38 +10,44 @@ from utils.utils import show_img
 from effects import *
 
 class Mask_Object():
-    def __init__(self, num_frames, color, device, max_memory=100, use_object_img=True) -> None:
+    def __init__(self, num_frames, color, device, fps, max_memory=100, use_object_img=True) -> None:
         self.max_memory = max_memory
         self.color = color
         self.device = device
+        self.fps = fps
         self.use_object_img = use_object_img
+        self.use_object_centroids = True
+        self.kaleidoscope = False
+        self.object_centroids: Deque[Tuple[int, int]] = deque(maxlen=max_memory)
         self.mask_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
         self.object_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
         self.effects: List[BasicEffect] = []
-        self.kaleidoscope = False
 
     def update_memory_frame(self, mask_img, org_frame):
         mask = cv2.inRange(mask_img, self.color, self.color)
-        mask = torch.tensor(mask.reshape(mask.shape[0], mask.shape[1], 1), dtype=torch.bool).to(self.device)
+        if self.use_object_centroids:
+            _, labeled_image, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=4)
 
-        
+            # find largest area
+            max_area = -1
+            max_area_label = -1
+            for label, stat in enumerate(stats[1:], start=1):
+                area = stat[4]  # stat[4]: area
+                if area > max_area:
+                    max_area = area
+                    max_area_label = label
+
+            # get centroid
+            if(max_area_label==-1):
+                self.object_centroids.append((-1, -1))
+            else:
+                centroid_x, centroid_y = centroids[max_area_label]
+                self.object_centroids.append((centroid_x, centroid_y))
+
+
+        mask = torch.tensor(mask.reshape(mask.shape[0], mask.shape[1], 1), dtype=torch.bool).to(self.device)
         object_img = torch.where(mask, org_frame, 0).to(self.device)
-            # matadate = self.get_effects().get("kaleidoscope", False)
-            # if matadate:
-            #     multiple = matadate["multiple"]
-            #     center = matadate["center"]
-            #     angle = 360//multiple
-            #     # show_img(object_img, figsize=(5, 5))
-            #     object_img = object_img.permute(2, 0, 1)
-            #     for degree in range(angle, 361, angle):
-            #         copy = rotate(object_img, angle=degree, center=center)
-            #         object_img = torch.bitwise_or(object_img, copy)
-            #         angle = angle*2
-            #     object_img = object_img.permute(1, 2, 0)
-            #     # show_img(copy.permute(1, 2, 0), figsize=(5, 5))
-            #     # show_img(object_img, figsize=(5, 5))
-            #     mask = object_img > 0
-            #     # print(mask.dtype)
+
         for effect in self.get_effects():
             mask, object_img = effect.object_mask_prepocess(mask, object_img)
                 
@@ -58,9 +64,18 @@ class Mask_Object():
         show_img(color_image)
 
     def add_effects(self, effect: BasicEffect):
+        setattr(effect, "fps", self.fps)
+        setattr(effect, "device", self.device)
         self.set_config(effect.config_setting())
         self.effects.append(effect)
 
+    def clear_effects(self):
+        self.get_mask_memory_frames().clear()
+        self.get_object_memory_frames().clear()
+        self.effects.clear()
+        self.object_centroids.clear()
+        self.use_object_centroids = False
+        self.kaleidoscope = False
     # def update_effects(self, effect: BasicEffect):
     #     self.effects.update(effect)
 
@@ -72,3 +87,6 @@ class Mask_Object():
 
     def get_object_memory_frames(self):
         return self.object_memory_frames
+    
+    def get_object_centroids(self):
+        return self.object_centroids

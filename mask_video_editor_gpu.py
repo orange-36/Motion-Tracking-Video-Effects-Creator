@@ -28,7 +28,7 @@ class Mask_Video_Editor():
         self.num_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.use_length_ratio = use_length_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.mask_object_list = [Mask_Object(self.num_frames, color=np.array([0, 0, 0]), device=self.device)]
+        self.mask_object_list = [Mask_Object(self.num_frames, color=np.array([0, 0, 0]), device=self.device, fps=self.fps)]
         self.rainbow_colors = torch.tensor([[0, 0, 255], [0, 67, 255], [0, 135, 255], [0, 173, 255], [0, 211, 255], [5, 233, 238], [10, 255, 222], [10, 255, 191], [10, 255, 161], [81, 255, 85], [153, 255, 10], 
                                         [204, 247, 10], [255, 239, 10], [250, 182, 15], [245, 125, 20], [250, 67, 54], [255, 10, 88], [255, 10, 139], [255, 10, 190], [127, 5, 222]], 
                                         dtype=torch.uint8).to(self.device) # BGR Red to Rurple
@@ -54,29 +54,30 @@ class Mask_Video_Editor():
 
             ##### Edit the background #####
             mask_memory_frames = self.mask_object_list[0].get_mask_memory_frames()
-            object_memory_frames = self.mask_object_list[0].get_object_memory_frames()  
+            object_memory_frames = self.mask_object_list[0].get_object_memory_frames()
+            object_centroids = self.mask_object_list[0].get_object_centroids()
             for effect in self.mask_object_list[0].get_effects():
-                background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames,
-                                                    fps=self.fps, device=self.device)
+                background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
+                                                    mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
             
             ##### Edit each object sequentially #####
             for object_idx, object in enumerate(self.mask_object_list[1:], start=1):
                 object.update_memory_frame(mask_img=mask_img, org_frame=org_frame)
                 mask_memory_frames = object.get_mask_memory_frames()
                 object_memory_frames = object.get_object_memory_frames()  
+                object_centroids = object.get_object_centroids()  
                 for effect in object.get_effects():
                     # print(f"Object {object_idx}: {objects_effect[object_idx]}")
                     # img = object.get_object_memory_frames()
-                    background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, 
-                                                        fps=self.fps, device=self.device)
+                    background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
+                                                        mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
                     
                     # org_frame = object.make_afterimage_effect(org_frame = img, fps=self.fps)
 
             output_video.write(background.cpu().numpy())
         output_video.release()
         for object in self.mask_object_list:
-            object.get_mask_memory_frames().clear()
-            object.get_object_memory_frames().clear()
+            object.clear_effects()
 
     def add_mask_object(self, mask_dir, detect_new_object_every_n=-1):
         assert self.num_frames == len(os.listdir(mask_dir)), f"number of images:{len(os.listdir(mask_dir))} in mask dir and video frames:{self.num_frames} not correct!"
@@ -97,7 +98,7 @@ class Mask_Video_Editor():
                             break
                     else:
                         color_dict.update({len(self.mask_object_list): frame[yx[0]][yx[1]]})
-                        self.mask_object_list.append(Mask_Object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device))
+                        self.mask_object_list.append(Mask_Object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device, fps=self.fps))
                         if len(color_dict) == color_num:
                             break
 
