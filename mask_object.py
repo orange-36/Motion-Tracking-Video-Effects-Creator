@@ -27,6 +27,8 @@ class Mask_Object():
         mask = cv2.inRange(mask_img, self.color, self.color)
         if self.use_object_centroids:
             _, labeled_image, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=4)
+            # self.object_centroids.append(centroids)
+            # print(centroids)
 
             # find largest area
             max_area = -1
@@ -39,10 +41,10 @@ class Mask_Object():
 
             # get centroid
             if(max_area_label==-1):
-                self.object_centroids.append((-1, -1))
+                self.object_centroids.append([])
             else:
                 centroid_x, centroid_y = centroids[max_area_label]
-                self.object_centroids.append((centroid_x, centroid_y))
+                self.object_centroids.append([(centroid_x, centroid_y)])
 
 
         mask = torch.tensor(mask.reshape(mask.shape[0], mask.shape[1], 1), dtype=torch.bool).to(self.device)

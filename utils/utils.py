@@ -2,7 +2,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import torch
 
-def show_img(img, figsize=(1, 1)):
+def show_img(img, figsize=(5, 5)):
     plt.figure(figsize=figsize)
     plt.imshow(img, interpolation='nearest')
     plt.show()
