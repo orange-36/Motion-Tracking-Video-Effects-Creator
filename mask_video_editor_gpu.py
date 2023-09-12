@@ -36,7 +36,7 @@ class Mask_Video_Editor():
         #                      "Light_track" : self.make_light_track_effect,
         #                      "Grayscale" : self.grayscale_effect
         #                      }
-        print(f"video:\n\t fps: {self.fps}, width: {self.width}, height: {self.height}, num_frames: {self.num_frames}")
+        print(f"video:\n\t fps: {self.fps}, width: {self.width}, height: {self.height}, num_frames: {self.num_frames}, device: {self.device}")
         
     def modify_video_frame_by_frame(self, mask_dir, video_name="test.mp4", objects_effect=None):
         mask_paths = sorted([os.path.join(mask_dir, img_name) for img_name in os.listdir(mask_dir)])        

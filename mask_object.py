@@ -51,7 +51,7 @@ class Mask_Object():
         object_img = torch.where(mask, org_frame, 0).to(self.device)
 
         for effect in self.get_effects():
-            mask, object_img = effect.object_mask_prepocess(mask, object_img)
+            mask, object_img, self.object_centroids = effect.object_mask_prepocess(mask, object_img, self.object_centroids)
                 
         self.mask_memory_frames.append(mask)
         self.object_memory_frames.append(object_img)

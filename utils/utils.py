@@ -4,7 +4,10 @@ import torch
 
 def show_img(img, figsize=(5, 5)):
     plt.figure(figsize=figsize)
-    plt.imshow(img, interpolation='nearest')
+    if img.shape[-1]==3:
+        plt.imshow(img, interpolation='nearest')
+    else: 
+        plt.imshow(img, cmap='gray')
     plt.show()
 
 def get_lens_flare(radius=5):

@@ -2,7 +2,8 @@ from typing import Deque, Dict, Tuple
 import torch
 import math
 import numpy as np
-from torchvision.transforms.functional import rotate, adjust_brightness, adjust_contrast
+from collections import Counter
+from torchvision.transforms.functional import rotate, adjust_brightness, adjust_contrast, affine
 from torchvision.transforms import Grayscale
 from utils.utils import get_lens_flare, show_img
 
@@ -14,8 +15,8 @@ class BasicEffect:
     def config_setting(self) -> Dict[str, int]:
         return {}
 
-    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor) -> None:
-        return mask, object_img
+    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor, object_centroids: Deque[Tuple[int, int]]) -> None:
+        return mask, object_img, object_centroids
 
     def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs) -> torch.tensor:
         return org_frame
@@ -99,7 +100,7 @@ class KaleidoscopeEffect(BasicEffect):
         self.center = center
         self.angle = 360//multiple
 
-    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor) -> None:
+    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor, object_centroids: Deque[Tuple[int, int]]) -> None:
         # show_img(object_img, figsize=(5, 5))
         object_img = object_img.permute(2, 0, 1)
         angle = self.angle
@@ -112,7 +113,7 @@ class KaleidoscopeEffect(BasicEffect):
         # show_img(object_img, figsize=(5, 5))
         mask = object_img > 0
         # print(mask.dtype)
-        return mask, object_img
+        return mask, object_img, object_centroids
     
 
 class GrayscaleEffect(BasicEffect):
@@ -141,7 +142,7 @@ class AdjustBrightnessAndContrast(BasicEffect):
         return org_frame
 
 class LensFlareEffect(BasicEffect):
-    def __init__(self, radius=50, center_brightness=10, apply_entire_track=True, rendering_effect=True, afterimage_interval_ratio=0.33, residual_time=0.2, alpha_start=0.1, alpha_end=1) -> None:
+    def __init__(self, radius=50, test = False, center_brightness=10, apply_entire_track=True, rendering_effect=False, afterimage_interval_ratio=0.33, residual_time=0.2, alpha_start=0.1, alpha_end=1) -> None:
         super().__init__()
         self.radius = radius
         self.lens_flare = (center_brightness*get_lens_flare(radius=self.radius)).type(dtype=torch.uint8).to(self.device).view(2*radius+1, 2*radius+1, 1)
@@ -152,6 +153,7 @@ class LensFlareEffect(BasicEffect):
         self.rendering_effect = rendering_effect
         self.alpha_start = alpha_start
         self.alpha_end = alpha_end
+        self.test = test
 
     def config_setting(self) -> Dict[str, int]:
         return {"use_object_centroids": True}
@@ -164,14 +166,12 @@ class LensFlareEffect(BasicEffect):
             from_current_list = range(1, min(len(object_centroids), int(self.residual_time*self.fps)), frame_interval)[::-1]
             if len(from_current_list)==0:
                 return org_frame
-            alpha_for_object_list = np.linspace(self.alpha_start, self.alpha_end, len(from_current_list), endpoint=False)
+            alpha_for_object_list = np.linspace(self.alpha_start, self.alpha_end, len(from_current_list), endpoint=True)
         else:
             from_current_list = [1]
             alpha_for_object_list = [1]
-        if self.rendering_effect:
-            all_lens_flare = torch.zeros((org_frame.shape[0], org_frame.shape[1], 1), dtype=torch.uint8).to(self.device)
-        # print(f"from_current_list: {from_current_list}")
 
+        all_lens_flare = torch.zeros((org_frame.shape[0], org_frame.shape[1], 1), dtype=torch.uint8).to(self.device)
         for from_current, alpha_for_object in zip(from_current_list, alpha_for_object_list):
             # print(org_frame)
             centroids_in_one_frame = object_centroids[-from_current]
@@ -183,24 +183,15 @@ class LensFlareEffect(BasicEffect):
                 left  = np.ceil(min(center_x, self.radius))
                 right = np.floor(min(org_frame.shape[1]-center_x, self.radius))
                 one_lens_flare[int(center_y-upper): int(center_y+lower), int(center_x-left): int(center_x+right)] = self.lens_flare[int(self.radius-upper): int(self.radius+lower), int(self.radius-left): int(self.radius+right)] 
+                one_lens_flare = (alpha_for_object*one_lens_flare).type(torch.uint8)
                 if self.rendering_effect:
-                    all_lens_flare = torch.bitwise_or(input=all_lens_flare, other=(alpha_for_object*one_lens_flare).type(torch.uint8))
-        # show_img(all_lens_flare.cpu())
-        if self.rendering_effect:
-            org_frame = org_frame + all_lens_flare.type(torch.float16)
-            org_frame = torch.clamp(org_frame, min=0, max=255).type(torch.uint8)
+                    all_lens_flare = torch.bitwise_or(input=all_lens_flare, other=one_lens_flare)
+                else:
+                    all_lens_flare = torch.max(one_lens_flare, all_lens_flare)
 
-        # centroids_in_one_frame = object_centroids[-1]
-        # all_lens_flare = torch.zeros((org_frame.shape[0], org_frame.shape[1], 1), dtype=torch.uint8).to(self.device)
-        # for (center_x, center_y) in centroids_in_one_frame:
-        #     one_lens_flare = torch.zeros((org_frame.shape[0], org_frame.shape[1], 1), dtype=torch.uint8).to(self.device)
-        #     upper = np.ceil(min(center_y, self.radius))
-        #     lower = np.floor(min(org_frame.shape[0]-center_y, self.radius))
-        #     left  = np.ceil(min(center_x, self.radius))
-        #     right = np.floor(min(org_frame.shape[1]-center_x, self.radius))
-        #     one_lens_flare[int(center_y-upper): int(center_y+lower), int(center_x-left): int(center_x+right)] = self.lens_flare[int(self.radius-upper): int(self.radius+lower), int(self.radius-left): int(self.radius+right)] 
-        #     all_lens_flare = torch.bitwise_or(input=all_lens_flare, other=one_lens_flare)
-        # org_frame = org_frame + all_lens_flare.type(torch.float16)
-        # org_frame = torch.clamp(org_frame, min=0, max=255).type(torch.uint8)
-
+                # show_img(all_lens_flare.cpu())
+                # print(Counter(all_lens_flare.flatten().tolist()))
+        org_frame = org_frame + all_lens_flare.type(torch.float16)
+        org_frame = torch.clamp(org_frame, min=0, max=255).type(torch.uint8)
+        
         return org_frame
