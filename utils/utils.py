@@ -16,7 +16,7 @@ def show_img(img, figsize=(5, 5)):
         plt.imshow(img, cmap='gray')
     plt.show()
 
-def get_lens_flare(radius=5, rgb_weights=[1, 1, 1]):
+def get_lens_flare(radius=5, exp_decay=1.5, use_decay_rate=1):
     rows, cols = 1+2*radius, 1+2*radius
     flare_effect = torch.zeros(size=(rows, cols))
     for i in range(rows):
@@ -26,8 +26,10 @@ def get_lens_flare(radius=5, rgb_weights=[1, 1, 1]):
                 flare_effect[i][j] = radius-distance
     # all value in range [0, 1]
     flare_effect = flare_effect.view(rows, cols, 1)
-    flare_effect = flare_effect/radius
-    # rgb_weights = torch.tensor(rgb_weights)
+    if use_decay_rate==1:
+        flare_effect = (flare_effect/radius)**exp_decay
+    else:
+        flare_effect = torch.pow(use_decay_rate, 10*(radius - flare_effect)/radius)
     return flare_effect
 
 def rotate_point(x, y, cx, cy, angle_degrees):

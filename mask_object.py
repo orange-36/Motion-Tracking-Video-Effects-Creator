@@ -16,12 +16,11 @@ class Mask_Object():
         self.device = device
         self.fps = fps
         self.use_object_img = use_object_img
-        self.use_object_centroids = True
+        self.use_object_centroids = False
         self.kaleidoscope = False
         self.object_centroids: Deque[Tuple[int, int]] = deque(maxlen=max_memory)
         self.mask_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
         self.object_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
-        self.effects: List[BasicEffect] = []
 
     def update_memory_frame(self, mask_img, org_frame):
         mask = cv2.inRange(mask_img, self.color, self.color)
@@ -65,21 +64,12 @@ class Mask_Object():
         color_image = np.array([[self.color for j in range(10)] for i in range(10)])
         show_img(color_image)
 
-    def add_effects(self, effect: BasicEffect):
-        setattr(effect, "fps", self.fps)
-        setattr(effect, "device", self.device)
-        self.set_config(effect.config_setting())
-        self.effects.append(effect)
-
-    def clear_effects(self):
+    def clear(self):
         self.get_mask_memory_frames().clear()
         self.get_object_memory_frames().clear()
-        self.effects.clear()
         self.object_centroids.clear()
         self.use_object_centroids = False
         self.kaleidoscope = False
-    # def update_effects(self, effect: BasicEffect):
-    #     self.effects.update(effect)
 
     def get_effects(self) -> List[BasicEffect]:
         return self.effects

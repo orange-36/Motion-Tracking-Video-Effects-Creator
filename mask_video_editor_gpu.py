@@ -1,7 +1,7 @@
 import cv2
 import os
 import typing
-from typing import Deque
+from typing import Deque, List
 import math
 import numpy as np
 import torch
@@ -29,13 +29,10 @@ class Mask_Video_Editor():
         self.use_length_ratio = use_length_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.mask_object_list = [Mask_Object(self.num_frames, color=np.array([0, 0, 0]), device=self.device, fps=self.fps)]
+        self.object_effects: List[List[BasicEffect]] = [[]]
         self.rainbow_colors = torch.tensor([[0, 0, 255], [0, 67, 255], [0, 135, 255], [0, 173, 255], [0, 211, 255], [5, 233, 238], [10, 255, 222], [10, 255, 191], [10, 255, 161], [81, 255, 85], [153, 255, 10], 
                                         [204, 247, 10], [255, 239, 10], [250, 182, 15], [245, 125, 20], [250, 67, 54], [255, 10, 88], [255, 10, 139], [255, 10, 190], [127, 5, 222]], 
                                         dtype=torch.uint8).to(self.device) # BGR Red to Rurple
-        # self.effect_mapping = {"AfterImage": self.make_afterimage_effect,
-        #                      "Light_track" : self.make_light_track_effect,
-        #                      "Grayscale" : self.grayscale_effect
-        #                      }
         print(f"video:\n\t fps: {self.fps}, width: {self.width}, height: {self.height}, num_frames: {self.num_frames}, device: {self.device}")
         
     def modify_video_frame_by_frame(self, mask_dir, video_name="test.mp4", objects_effect=None):
@@ -53,31 +50,29 @@ class Mask_Video_Editor():
             mask_img = cv2.resize(mask_img, (self.width, self.height)) # , interpolation = cv2.INTER_NEAREST 
 
             ##### Edit the background #####
-            mask_memory_frames = self.mask_object_list[0].get_mask_memory_frames()
-            object_memory_frames = self.mask_object_list[0].get_object_memory_frames()
-            object_centroids = self.mask_object_list[0].get_object_centroids()
-            for effect in self.mask_object_list[0].get_effects():
+            background_id = 0
+            mask_memory_frames = self.mask_object_list[background_id].get_mask_memory_frames()
+            object_memory_frames = self.mask_object_list[background_id].get_object_memory_frames()
+            object_centroids = self.mask_object_list[background_id].get_object_centroids()
+            for effect in self.object_effects[background_id]:
                 background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
                                                     mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
             
             ##### Edit each object sequentially #####
-            for object_idx, object in enumerate(self.mask_object_list[1:], start=1):
+            for object_id, object in enumerate(self.mask_object_list[1:], start=1):
                 object.update_memory_frame(mask_img=mask_img, org_frame=org_frame)
                 mask_memory_frames = object.get_mask_memory_frames()
                 object_memory_frames = object.get_object_memory_frames()  
                 object_centroids = object.get_object_centroids()  
-                for effect in object.get_effects():
-                    # print(f"Object {object_idx}: {objects_effect[object_idx]}")
+                for effect in self.object_effects[object_id]:
+                    # print(f"Object {object_id}: {objects_effect[object_id]}")
                     # img = object.get_object_memory_frames()
                     background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
                                                         mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
-                    
-                    # org_frame = object.make_afterimage_effect(org_frame = img, fps=self.fps)
 
             output_video.write(background.cpu().numpy())
         output_video.release()
-        for object in self.mask_object_list:
-            object.clear_effects()
+        self.clear_effects()
 
     def add_mask_object(self, mask_dir, detect_new_object_every_n=-1):
         assert self.num_frames == len(os.listdir(mask_dir)), f"number of images:{len(os.listdir(mask_dir))} in mask dir and video frames:{self.num_frames} not correct!"
@@ -99,15 +94,16 @@ class Mask_Video_Editor():
                     else:
                         color_dict.update({len(self.mask_object_list): frame[yx[0]][yx[1]]})
                         self.mask_object_list.append(Mask_Object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device, fps=self.fps))
+                        self.object_effects.append([])
                         if len(color_dict) == color_num:
                             break
 
             # print(f"total objects: {len(color_dict)}")
             # detect objects mask
 
-            # for object_idx, color in color_dict.items():
+            # for object_id, color in color_dict.items():
             #     mask = cv2.inRange(frame, color, color)
-            #     self.mask_object_list[object_idx].update_mask_frame(frame_idx=i, mask=mask)
+            #     self.mask_object_list[object_id].update_mask_frame(frame_idx=i, mask=mask)
 
     def get_mask_object(self, index) -> Mask_Object: 
         return self.mask_object_list[index]
@@ -124,57 +120,14 @@ class Mask_Video_Editor():
     def get_current_video_memory_frame(self, idx_from_cuurent=-1):
         return self.video_memory_frames[idx_from_cuurent]
 
-    # def make_afterimage_effect(self, mask_object, org_frame, fps, frame_idx, afterimage_interval_ratio=0.33, residual_time=0.2, alpha_start=0.1, alpha_end=1):
-    #     frame_interval = math.ceil(residual_time*fps*afterimage_interval_ratio)
-    #     # if frame_interval < 1:
-    #     #     print(frame_interval)
-    #     from_current_list = range(frame_interval, min(len(mask_object.mask_memory_frames), int(residual_time*fps)), frame_interval)[::-1]
-    #     if len(from_current_list)==0:
-    #         return org_frame
-    #     alpha_for_object_list = np.linspace(alpha_start, alpha_end, len(from_current_list), endpoint=False)
+    def add_effect(self, object_id: int, effect: BasicEffect) -> None:
+        self.object_effects[object_id].append(effect)
+        setattr(effect, "fps", self.fps)
+        setattr(effect, "device", self.device)
+        self.mask_object_list[object_id].set_config(effect.config_setting())
 
-
-    #     for from_current, alpha_for_object in zip(from_current_list, alpha_for_object_list):
-    #         # print(org_frame)
-    #         draw_track = (alpha_for_object*mask_object.get_object_memory_frames()[-from_current] + (1-alpha_for_object)*org_frame).type(torch.uint8)
-    #         org_frame = torch.where((mask_object.get_mask_memory_frames()[-from_current]), 
-    #                             draw_track, org_frame)
-    #         # print(draw_track)
-
-    #     return org_frame
-    
-    # def make_light_track_effect(self, mask_object, org_frame, fps, frame_idx, afterimage_interval_ratio=0.33, residual_time=0.2, alpha_start=0.1, alpha_end=1, gradient=True, rainbow_round_time=-1, color=[255, 255, 255]):
-    #     frame_interval = int(residual_time*fps*afterimage_interval_ratio)
-    #     if frame_interval < 1:
-    #         frame_interval = 1
-    #     from_current_list = range(frame_interval, min(len(mask_object.mask_memory_frames), int(residual_time*fps)), frame_interval)[::-1]
-    #     if len(from_current_list)==0:
-    #         return org_frame
-    #     alpha_for_object_list = np.linspace(alpha_start, alpha_end, len(from_current_list), endpoint=False)
-
-    #     if rainbow_round_time>0:
-    #         aver_rainbow_color_change_frame = self.fps*rainbow_round_time/len(self.rainbow_colors)
-    #         rainbow_colors_num = len(self.rainbow_colors)
-
-    #     for from_current, alpha_for_object in zip(from_current_list, alpha_for_object_list):
-    #         if rainbow_round_time>0:
-    #             color_track = self.rainbow_colors[int((frame_idx-from_current)//aver_rainbow_color_change_frame)%rainbow_colors_num]
-    #         else:
-    #             color_track = torch.tensor(color, dtype=torch.uint8).to(self.device)
-
-    #         if gradient:
-
-    #             draw_track = (alpha_for_object*color_track + (1-alpha_for_object)*org_frame).type(torch.uint8)
-    #             org_frame = torch.where((mask_object.get_mask_memory_frames()[-from_current]), 
-    #                                     draw_track, org_frame)
-    #         else:
-    #             org_frame = torch.where((mask_object.get_mask_memory_frames()[-from_current]), 
-    #                                     color_track, org_frame)
-
-    #     return org_frame.type(torch.uint8)
-    
-    # def grayscale_effect(self, mask_object, org_frame):
-    #     org_frame = org_frame.permute(2, 0, 1)
-    #     org_frame = Grayscale(3)(org_frame)
-    #     org_frame = org_frame.permute(1, 2, 0)
-    #     return org_frame
+    def clear_effects(self) -> None:
+        for object in self.mask_object_list:
+            object.clear()
+        for effects in self.object_effects:
+            effects.clear()
