@@ -50,25 +50,26 @@ class Mask_Video_Editor():
             mask_img = cv2.resize(mask_img, (self.width, self.height)) # , interpolation = cv2.INTER_NEAREST 
 
             ##### Edit the background #####
-            background_id = 0
-            mask_memory_frames = self.mask_object_list[background_id].get_mask_memory_frames()
-            object_memory_frames = self.mask_object_list[background_id].get_object_memory_frames()
-            object_centroids = self.mask_object_list[background_id].get_object_centroids()
-            for effect in self.object_effects[background_id]:
-                background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
-                                                    mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
+            # background_id = 0
+            # mask_memory_frames = self.mask_object_list[background_id].get_mask_memory_frames()
+            # object_memory_frames = self.mask_object_list[background_id].get_object_memory_frames()
+            # object_centroids = self.mask_object_list[background_id].get_object_centroids()
+            # for effect in self.object_effects[background_id]:
+            #     background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
+            #                                         mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
             
             ##### Edit each object sequentially #####
-            for object_id, object in enumerate(self.mask_object_list[1:], start=1):
-                object.update_memory_frame(mask_img=mask_img, org_frame=org_frame)
-                mask_memory_frames = object.get_mask_memory_frames()
-                object_memory_frames = object.get_object_memory_frames()  
-                object_centroids = object.get_object_centroids()  
+            for object_id, object in enumerate(self.mask_object_list):
+                object.update_memory_frame(mask_img=mask_img, org_frame=org_frame, effects=self.object_effects[object_id])
+                for effect in self.object_effects[object_id]:
+                    effect.object_mask_prepocess()
+                # mask_memory_frames = object.get_mask_memory_frames()
+                # object_memory_frames = object.get_object_memory_frames()  
+                # object_centroids = object.get_object_centroids()  
                 for effect in self.object_effects[object_id]:
                     # print(f"Object {object_id}: {objects_effect[object_id]}")
                     # img = object.get_object_memory_frames()
-                    background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
-                                                        mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
+                    background = effect.perform_editing(org_frame=background, frame_idx=frame_idx)
 
             output_video.write(background.cpu().numpy())
         output_video.release()
@@ -122,8 +123,7 @@ class Mask_Video_Editor():
 
     def add_effect(self, object_id: int, effect: BasicEffect) -> None:
         self.object_effects[object_id].append(effect)
-        setattr(effect, "fps", self.fps)
-        setattr(effect, "device", self.device)
+        effect.set_attr(fps=self.fps, device=self.device, object=self.mask_object_list[object_id])
         self.mask_object_list[object_id].set_config(effect.config_setting())
 
     def clear_effects(self) -> None:

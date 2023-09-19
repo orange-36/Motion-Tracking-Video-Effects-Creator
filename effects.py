@@ -3,22 +3,32 @@ import torch
 import math
 import numpy as np
 from collections import Counter
+from collections import deque
+
 from torchvision.transforms.functional import rotate, adjust_brightness, adjust_contrast, affine
 from torchvision.transforms import Grayscale
 from utils.utils import get_lens_flare, show_img, rotate_point, rainbow_colors
+from mask_object import Mask_Object
 
 class BasicEffect:
-    def __init__(self) -> None:
-        self.fps = None
-        self.device = None
+    def __init__(self, max_memory=100) -> None:
+        self.fps: float = None
+        self.device: torch.device = None
+        self.object: Mask_Object = None
+        self.effect_memory_frames: Deque[Tuple[int, int]] = deque(maxlen=max_memory)
+
+    def set_attr(self, fps: float, device: torch.device, object: Mask_Object) -> None:
+        self.fps = fps
+        self.device = device
+        self.object = object
 
     def config_setting(self) -> Dict[str, int]:
         return {}
+    
+    def object_mask_prepocess(self) -> None:
+        pass
 
-    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor, object_centroids: Deque[Tuple[int, int]]) -> None:
-        return mask, object_img, object_centroids
-
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs) -> torch.tensor:
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int) -> torch.tensor:
         return org_frame
 
 class AfterimageEffect(BasicEffect):
@@ -29,7 +39,10 @@ class AfterimageEffect(BasicEffect):
         self.alpha_start = alpha_start
         self.alpha_end = alpha_end
 
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
+        mask_memory_frames = self.object.get_mask_memory_frames()
+        object_memory_frames = self.object.get_object_memory_frames()
+
         frame_interval = math.ceil(self.residual_time*self.fps*self.afterimage_interval_ratio)
         # if frame_interval < 1:
         #     print(frame_interval)
@@ -60,7 +73,9 @@ class LightTrackEffect(BasicEffect):
         self.color = color          
         self.rainbow_colors = torch.tensor(rainbow_colors,  dtype=torch.uint8)
         
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
+        mask_memory_frames = self.object.get_mask_memory_frames()
+        
         frame_interval = int(self.residual_time*self.fps*self.afterimage_interval_ratio)
         if frame_interval < 1:
             frame_interval = 1
@@ -98,7 +113,10 @@ class KaleidoscopeEffect(BasicEffect):
         self.center = center
         self.angle = 360//multiple
 
-    def object_mask_prepocess(self, mask: torch.BoolTensor, object_img: torch.tensor, object_centroids: Deque[Tuple[int, int]]) -> None:
+    def object_mask_prepocess(self) -> None:
+        mask = self.object.get_mask_memory_frames().pop()
+        object_img = self.object.get_object_memory_frames().pop()
+        object_centroids = self.object.get_object_centroids()
         # show_img(object_img, figsize=(5, 5))
         object_img = object_img.permute(2, 0, 1)
         angle = self.angle
@@ -117,14 +135,16 @@ class KaleidoscopeEffect(BasicEffect):
         # show_img(object_img, figsize=(5, 5))
         mask = object_img > 0
         # print(mask.dtype)
-        return mask, object_img, object_centroids
+        self.object.get_mask_memory_frames().append(mask)
+        self.object.get_object_memory_frames().append(object_img)
+        # object_centroids = self.object.get_object_centroids()
     
 
 class GrayscaleEffect(BasicEffect):
     def __init__(self) -> None:
         super().__init__()
 
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
         org_frame = org_frame.permute(2, 0, 1)
         org_frame = Grayscale(3)(org_frame)
         org_frame = org_frame.permute(1, 2, 0)
@@ -136,7 +156,7 @@ class AdjustBrightnessAndContrast(BasicEffect):
         self.brightness_factor = brightness_factor
         self.contrast_factor = contrast_factor
     
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, mask_memory_frames: Deque[torch.BoolTensor], object_memory_frames: Deque[torch.tensor], **kwargs):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
         org_frame = org_frame.permute(2, 0, 1)
         if self.brightness_factor!=1:
             org_frame = adjust_brightness(img=org_frame, brightness_factor=self.brightness_factor)
@@ -168,7 +188,9 @@ class LensFlareEffect(BasicEffect):
     def config_setting(self) -> Dict[str, int]:
         return {"use_object_centroids": True}
 
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int, object_centroids: Deque[Tuple[int, int]], **kwargs):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
+        object_centroids = self.object.get_object_centroids()
+        
         frame_interval = math.ceil(self.residual_time*self.fps*self.afterimage_interval_ratio)
         # if frame_interval < 1:
         #     print(frame_interval)

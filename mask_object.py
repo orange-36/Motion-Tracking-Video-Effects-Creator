@@ -5,9 +5,8 @@ import math
 import numpy as np
 import torch
 from collections import deque
-from typing import List, Deque
+from typing import List, Deque, Dict, Tuple
 from utils.utils import show_img
-from effects import *
 
 class Mask_Object():
     def __init__(self, num_frames, color, device, fps, max_memory=100, use_object_img=True) -> None:
@@ -22,7 +21,7 @@ class Mask_Object():
         self.mask_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
         self.object_memory_frames: Deque[torch.tensor] = deque(maxlen=max_memory)
 
-    def update_memory_frame(self, mask_img, org_frame):
+    def update_memory_frame(self, mask_img, org_frame, effects):
         mask = cv2.inRange(mask_img, self.color, self.color)
         if self.use_object_centroids:
             _, labeled_image, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=4)
@@ -44,13 +43,14 @@ class Mask_Object():
             else:
                 centroid_x, centroid_y = centroids[max_area_label]
                 self.object_centroids.append([(centroid_x, centroid_y)])
-
+        else:
+            self.object_centroids.append([])
 
         mask = torch.tensor(mask.reshape(mask.shape[0], mask.shape[1], 1), dtype=torch.bool).to(self.device)
         object_img = torch.where(mask, org_frame, 0).to(self.device)
 
-        for effect in self.get_effects():
-            mask, object_img, self.object_centroids = effect.object_mask_prepocess(mask, object_img, self.object_centroids)
+        # for effect in effects:
+        #     mask, object_img, self.object_centroids = effect.object_mask_prepocess(mask, object_img, self.object_centroids)
                 
         self.mask_memory_frames.append(mask)
         self.object_memory_frames.append(object_img)
@@ -71,8 +71,6 @@ class Mask_Object():
         self.use_object_centroids = False
         self.kaleidoscope = False
 
-    def get_effects(self) -> List[BasicEffect]:
-        return self.effects
 
     def get_mask_memory_frames(self):
         return self.mask_memory_frames
