@@ -49,20 +49,11 @@ class Mask_Video_Editor():
             background = org_frame.clone()
             mask_img = cv2.resize(mask_img, (self.width, self.height)) # , interpolation = cv2.INTER_NEAREST 
 
-            ##### Edit the background #####
-            # background_id = 0
-            # mask_memory_frames = self.mask_object_list[background_id].get_mask_memory_frames()
-            # object_memory_frames = self.mask_object_list[background_id].get_object_memory_frames()
-            # object_centroids = self.mask_object_list[background_id].get_object_centroids()
-            # for effect in self.object_effects[background_id]:
-            #     background = effect.perform_editing(org_frame=background, frame_idx=frame_idx, 
-            #                                         mask_memory_frames=mask_memory_frames, object_memory_frames=object_memory_frames, object_centroids=object_centroids)
-            
             ##### Edit each object sequentially #####
             for object_id, object in enumerate(self.mask_object_list):
                 object.update_memory_frame(mask_img=mask_img, org_frame=org_frame, effects=self.object_effects[object_id])
                 for effect in self.object_effects[object_id]:
-                    effect.object_mask_prepocess()
+                    effect.object_mask_prepocess(frame_idx=frame_idx)
                 # mask_memory_frames = object.get_mask_memory_frames()
                 # object_memory_frames = object.get_object_memory_frames()  
                 # object_centroids = object.get_object_centroids()  
@@ -123,7 +114,7 @@ class Mask_Video_Editor():
 
     def add_effect(self, object_id: int, effect: BasicEffect) -> None:
         self.object_effects[object_id].append(effect)
-        effect.set_attr(fps=self.fps, device=self.device, object=self.mask_object_list[object_id])
+        effect.set_attr(fps=self.fps, device=self.device, object=self.mask_object_list[object_id], width=self.width, height=self.height)
         self.mask_object_list[object_id].set_config(effect.config_setting())
 
     def clear_effects(self) -> None:
