@@ -8,23 +8,25 @@ from collections import deque
 from torchvision.transforms.functional import rotate, adjust_brightness, adjust_contrast, affine
 from torchvision.transforms import Grayscale
 from utils.utils import get_lens_flare, show_img, rotate_point, rainbow_colors
-from mask_object import Mask_Object
+from mask_object import BasicObject
 
 class BasicEffect:
     def __init__(self, max_memory=100) -> None:
         self.fps: float = None
         self.device: torch.device = None
-        self.object: Mask_Object = None
+        self.object: BasicObject = None
         self.width: int = None
         self.height: int = None
+        self.max_memory = max_memory
         self.effect_memory_frames: Deque = deque(maxlen=max_memory)
 
-    def set_attr(self, fps: float, device: torch.device, object: Mask_Object, width: int, height: int) -> None:
+    def set_attr(self, fps: float, device: torch.device, object: BasicObject, width: int, height: int, max_memory: int) -> None:
         self.fps = fps
         self.device = device
         self.object = object
         self.width = width
         self.height = height
+        self.max_memory = max_memory
 
     def config_setting(self) -> Dict[str, int]:
         return {}
@@ -48,8 +50,6 @@ class AfterimageEffect(BasicEffect):
         object_memory_frames = self.object.get_object_memory_frames()
 
         frame_interval = math.ceil(self.residual_time*self.fps*self.afterimage_interval_ratio)
-        # if frame_interval < 1:
-        #     print(frame_interval)
         from_current_list = range(frame_interval, min(len(mask_memory_frames), int(self.residual_time*self.fps)), frame_interval)[::-1]
         if len(from_current_list)==0:
             return org_frame
@@ -143,7 +143,6 @@ class KaleidoscopeEffect(BasicEffect):
         self.object.get_object_memory_frames().append(object_img)
         # object_centroids = self.object.get_object_centroids()
     
-
 class GrayscaleEffect(BasicEffect):
     def __init__(self) -> None:
         super().__init__()

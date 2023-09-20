@@ -11,7 +11,7 @@ from collections import deque
 from matplotlib import pyplot as plt
 from torchvision.transforms.functional import rotate
 from torchvision.transforms import Grayscale
-from mask_object import Mask_Object
+from mask_object import BasicObject, MaskObject, DetectedObject
 from effects import *
 
 
@@ -28,38 +28,40 @@ class Mask_Video_Editor():
         self.num_frames = int(self.cap.get(cv2.CAP_PROP_FRAME_COUNT))
         self.use_length_ratio = use_length_ratio
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.mask_object_list = [Mask_Object(self.num_frames, color=np.array([0, 0, 0]), device=self.device, fps=self.fps)]
+        self.mask_object_list = [BasicObject(color=np.array([0, 0, 0]), device=self.device, fps=self.fps)]
         self.object_effects: List[List[BasicEffect]] = [[]]
         self.rainbow_colors = torch.tensor([[0, 0, 255], [0, 67, 255], [0, 135, 255], [0, 173, 255], [0, 211, 255], [5, 233, 238], [10, 255, 222], [10, 255, 191], [10, 255, 161], [81, 255, 85], [153, 255, 10], 
                                         [204, 247, 10], [255, 239, 10], [250, 182, 15], [245, 125, 20], [250, 67, 54], [255, 10, 88], [255, 10, 139], [255, 10, 190], [127, 5, 222]], 
                                         dtype=torch.uint8).to(self.device) # BGR Red to Rurple
         print(f"video:\n\t fps: {self.fps}, width: {self.width}, height: {self.height}, num_frames: {self.num_frames}, device: {self.device}")
         
-    def modify_video_frame_by_frame(self, mask_dir, video_name="test.mp4", objects_effect=None):
-        mask_paths = sorted([os.path.join(mask_dir, img_name) for img_name in os.listdir(mask_dir)])        
+    def modify_video_frame_by_frame(self, mask_dir=None, video_name="test.mp4"):
+        if mask_dir is not None:
+            mask_paths = sorted([os.path.join(mask_dir, img_name) for img_name in os.listdir(mask_dir)])        
         output_video = cv2.VideoWriter(video_name, cv2.VideoWriter_fourcc(*"mp4v"), self.fps, (self.width,self.height))
         self.cap = cv2.VideoCapture(self.video_path)
 
-        for frame_idx, mask_path in enumerate(tqdm((mask_paths[:int(self.use_length_ratio*self.num_frames)]))):
+        for frame_idx in tqdm(range(int(self.use_length_ratio*self.num_frames))):
             ret, org_frame = self.cap.read()
             # print(ret)
-            mask_img = cv2.imread(mask_path)
 
             org_frame = torch.tensor(cv2.resize(org_frame, (self.width, self.height)), dtype=torch.uint8).to(self.device)
             background = org_frame.clone()
-            mask_img = cv2.resize(mask_img, (self.width, self.height)) # , interpolation = cv2.INTER_NEAREST 
+
+            if mask_dir is not None:
+                mask_img = cv2.imread(mask_paths[frame_idx])
+                mask_img = cv2.resize(mask_img, (self.width, self.height)) # , interpolation = cv2.INTER_NEAREST 
+            else:
+                mask_img = None
 
             ##### Edit each object sequentially #####
             for object_id, object in enumerate(self.mask_object_list):
-                object.update_memory_frame(mask_img=mask_img, org_frame=org_frame, effects=self.object_effects[object_id])
+                object.update_memory_frame(mask_img=mask_img, org_frame=org_frame)
+                
                 for effect in self.object_effects[object_id]:
                     effect.object_mask_prepocess(frame_idx=frame_idx)
-                # mask_memory_frames = object.get_mask_memory_frames()
-                # object_memory_frames = object.get_object_memory_frames()  
-                # object_centroids = object.get_object_centroids()  
+
                 for effect in self.object_effects[object_id]:
-                    # print(f"Object {object_id}: {objects_effect[object_id]}")
-                    # img = object.get_object_memory_frames()
                     background = effect.perform_editing(org_frame=background, frame_idx=frame_idx)
 
             output_video.write(background.cpu().numpy())
@@ -85,22 +87,19 @@ class Mask_Video_Editor():
                             break
                     else:
                         color_dict.update({len(self.mask_object_list): frame[yx[0]][yx[1]]})
-                        self.mask_object_list.append(Mask_Object(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device, fps=self.fps))
+                        self.mask_object_list.append(MaskObject(self.num_frames, color=frame[yx[0]][yx[1]], device=self.device, fps=self.fps))
                         self.object_effects.append([])
                         if len(color_dict) == color_num:
                             break
 
-            # print(f"total objects: {len(color_dict)}")
-            # detect objects mask
+    def add_detected_object(self, color_upper, color_lower):
+        self.mask_object_list.append(DetectedObject(color_upper=color_upper, color_lower=color_lower, device=self.device, fps=self.fps))
+        self.object_effects.append([])
 
-            # for object_id, color in color_dict.items():
-            #     mask = cv2.inRange(frame, color, color)
-            #     self.mask_object_list[object_id].update_mask_frame(frame_idx=i, mask=mask)
-
-    def get_mask_object(self, index) -> Mask_Object: 
+    def get_object(self, index) -> BasicObject: 
         return self.mask_object_list[index]
     
-    def show_mask_objects(self) -> Mask_Object:
+    def show_objects(self) -> BasicObject:
         print("Object 0 is for the background or to process the entire original image")
         for i, object in enumerate(self.mask_object_list):
             print(i)
@@ -114,7 +113,7 @@ class Mask_Video_Editor():
 
     def add_effect(self, object_id: int, effect: BasicEffect) -> None:
         self.object_effects[object_id].append(effect)
-        effect.set_attr(fps=self.fps, device=self.device, object=self.mask_object_list[object_id], width=self.width, height=self.height)
+        effect.set_attr(fps=self.fps, device=self.device, object=self.mask_object_list[object_id], width=self.width, height=self.height, max_memory=self.max_memory)
         self.mask_object_list[object_id].set_config(effect.config_setting())
 
     def clear_effects(self) -> None:
