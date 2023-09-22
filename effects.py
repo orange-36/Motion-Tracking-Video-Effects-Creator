@@ -2,13 +2,20 @@ from typing import Deque, Dict, Tuple
 import torch
 import math
 import numpy as np
+import cv2
 from collections import Counter
 from collections import deque
 
+import torch.nn.functional as F
 from torchvision.transforms.functional import rotate, adjust_brightness, adjust_contrast, affine
 from torchvision.transforms import Grayscale
 from utils.utils import get_lens_flare, show_img, rotate_point, rainbow_colors
 from mask_object import BasicObject
+from style_transfer.style_transfer import run_style_transfer
+from style_transfer.CCPL import net
+import torch.nn as nn
+
+
 
 class BasicEffect:
     def __init__(self, max_memory=100) -> None:
@@ -45,7 +52,7 @@ class AfterimageEffect(BasicEffect):
         self.alpha_start = alpha_start
         self.alpha_end = alpha_end
 
-    def perform_editing(self, org_frame: torch.tensor, frame_idx: int):
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int) -> torch.tensor:
         mask_memory_frames = self.object.get_mask_memory_frames()
         object_memory_frames = self.object.get_object_memory_frames()
 
@@ -57,11 +64,9 @@ class AfterimageEffect(BasicEffect):
 
 
         for from_current, alpha_for_object in zip(from_current_list, alpha_for_object_list):
-            # print(org_frame)
             draw_track = (alpha_for_object*object_memory_frames[-from_current] + (1-alpha_for_object)*org_frame).type(torch.uint8)
             org_frame = torch.where((object_memory_frames[-from_current]>0), 
                                 draw_track, org_frame)
-            # print(draw_track)
 
         return org_frame
     
@@ -109,7 +114,6 @@ class LightTrackEffect(BasicEffect):
 
         return org_frame #.type(torch.uint8)
     
-
 class KaleidoscopeEffect(BasicEffect):
     def __init__(self, multiple: int = 8, center: Tuple[int, int] = (400, 200)) -> None:
         super().__init__()
@@ -135,13 +139,9 @@ class KaleidoscopeEffect(BasicEffect):
 
             angle = angle*2
         object_img = object_img.permute(1, 2, 0)
-        # show_img(copy.permute(1, 2, 0), figsize=(5, 5))
-        # show_img(object_img, figsize=(5, 5))
         mask = object_img > 0
-        # print(mask.dtype)
         self.object.get_mask_memory_frames().append(mask)
         self.object.get_object_memory_frames().append(object_img)
-        # object_centroids = self.object.get_object_centroids()
     
 class GrayscaleEffect(BasicEffect):
     def __init__(self) -> None:
@@ -253,4 +253,56 @@ class HaloEffect(BasicEffect):
         org_frame = org_frame + all_lens_flare.type(torch.float16)
         org_frame = torch.clamp(org_frame, min=0, max=255).type(torch.uint8)
         
+        return org_frame
+    
+class DilationEffect(BasicEffect):
+    def __init__(self, dilation_degree=1) -> None:
+        super().__init__()
+        # self.multiple = multiple
+        kernel_size = 2 * dilation_degree + 1
+        self.kernel = np.ones((kernel_size, kernel_size), dtype=np.uint8)
+
+    def object_mask_prepocess(self, frame_idx) -> None:
+        mask = self.object.get_mask_memory_frames().pop().cpu().numpy()
+        dalited_img = cv2.dilate(mask.astype(np.uint8), self.kernel)
+        dalited_img = torch.tensor(dalited_img, dtype=torch.bool).view(self.height, self.width, 1).to(self.device)
+        self.object.get_mask_memory_frames().append(dalited_img)
+
+
+class StyleTransferEffect(BasicEffect):
+    def __init__(self, reference_path, afterimage_interval_ratio=0.33, residual_time=0.2, transform_size=512) -> None:
+        super().__init__()
+        self.afterimage_interval_ratio = afterimage_interval_ratio
+        self.residual_time = residual_time
+        self.reference_img = cv2.imread(reference_path)
+        self.decoder = net.decoder
+        self.vgg = net.vgg
+        self.network = net.Net(self.vgg, self.decoder, 'art')
+        self.SCT = self.network.SCT
+
+        self.SCT.eval()
+        self.decoder.eval()
+        self.vgg.eval()
+
+        self.decoder.load_state_dict(torch.load('./style_transfer/CCPL/artistic/decoder_iter_160000.pth.tar'))
+        self.vgg.load_state_dict(torch.load('./style_transfer/CCPL/models/vgg_normalised.pth'))
+        self.SCT.load_state_dict(torch.load('./style_transfer/CCPL/artistic/sct_iter_160000.pth.tar'))
+        self.vgg = nn.Sequential(*list(self.vgg.children())[:31]) 
+
+        self.transform_size = transform_size
+
+    def perform_editing(self, org_frame: torch.tensor, frame_idx: int) -> torch.tensor:
+        mask_memory_frames = self.object.get_mask_memory_frames()
+
+        frame_interval = math.ceil(self.residual_time*self.fps*self.afterimage_interval_ratio)
+        from_current_list = range(1, min(len(mask_memory_frames), int(self.residual_time*self.fps)), frame_interval)[::-1]
+        if len(from_current_list)==0:
+            return org_frame
+
+        mask = torch.zeros((self.height, self.width, 1), dtype=torch.bool).to(self.device)
+        for from_current in from_current_list:
+            mask = torch.bitwise_or(mask, mask_memory_frames[-from_current])
+            
+        org_frame = run_style_transfer(img=org_frame, mask=mask, reference_image=self.reference_img, device=self.device, decoder=self.decoder, SCT=self.SCT, vgg=self.vgg)
+
         return org_frame

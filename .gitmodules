@@ -1,0 +1,3 @@
+[submodule "style_transfer/CCPL"]
+	path = style_transfer/CCPL
+	url = https://github.com/JarrentWu1031/CCPL.git
